@@ -29,7 +29,7 @@
   --color-amber:     #c37d0d;   /* Warning amber */
 
   /* Map */
-  --color-map-bg:    #f0ede8;   /* Warm cream — Leaflet container bg */
+  --color-map-bg:    #f0ede8;   /* Warm cream — map container bg */
 
   /* Prose */
   --color-prose:     #333333;   /* Body text in articles */
@@ -248,42 +248,24 @@ html.dark .card-clay:hover {
   box-shadow: -6px 10px 0px rgba(0,0,0,0.35);
 }
 
-/* ── Leaflet map controls — higher contrast dark theme ── */
+/* ── Map controls and popups ── */
 html.dark .map-el,
 html.dark [id^="mini-map-"] {
-  box-shadow:
-    inset 0 0 0 1px rgba(148, 163, 184, 0.18),
-    0 18px 40px rgba(2, 6, 23, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.18), 0 18px 40px rgba(2, 6, 23, 0.28);
 }
-
-html.dark .leaflet-control-zoom a {
-  background: rgba(15, 23, 42, 0.92) !important;
-  color: #e2e8f0 !important;
-  border-color: rgba(148, 163, 184, 0.28) !important;
+.maplibregl-ctrl-group { background: rgba(15, 23, 42, 0.92) !important; box-shadow: 0 10px 24px rgba(2, 6, 23, 0.32); }
+.maplibregl-ctrl-group button { filter: invert(1); }
+.maplibregl-ctrl-group button:hover { background-color: rgba(148, 163, 184, 0.15); }
+.maplibregl-ctrl-attrib { background: rgba(15, 23, 42, 0.78) !important; color: #cbd5e1 !important; }
+.maplibregl-ctrl-attrib a { color: #cbd5e1 !important; }
+.dive-map-tooltip .maplibregl-popup-content,
+.ski-map-tooltip .maplibregl-popup-content {
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(71, 85, 105, 0.88);
+  border-radius: 14px;
+  box-shadow: 0 20px 44px rgba(2, 6, 23, 0.42);
+  color: #e2e8f0;
+  padding: 0.4rem 0.6rem;
 }
-html.dark .leaflet-control-zoom a:hover {
-  background: rgba(30, 41, 59, 0.96) !important;
-  color: #f8fafc !important;
-}
-html.dark .leaflet-bar {
-  border-color: rgba(148, 163, 184, 0.22) !important;
-  box-shadow: 0 10px 24px rgba(2,6,23,0.32) !important;
-}
-html.dark .leaflet-control-attribution {
-  background: rgba(15, 23, 42, 0.78) !important;
-  color: #94a3b8 !important;
-  backdrop-filter: blur(8px);
-}
-html.dark .leaflet-control-attribution a {
-  color: #cbd5e1 !important;
-}
-html.dark .leaflet-tooltip.dive-map-tooltip {
-  background: rgba(15, 23, 42, 0.94) !important;
-  border: 1px solid rgba(71, 85, 105, 0.88) !important;
-  border-radius: 14px !important;
-  box-shadow: 0 20px 44px rgba(2, 6, 23, 0.42) !important;
-  padding: 0.2rem 0.3rem !important;
-}
-html.dark .leaflet-tooltip.dive-map-tooltip::before {
-  border-top-color: rgba(15, 23, 42, 0.94) !important;
-}
+.dive-map-tooltip.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.ski-map-tooltip.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: rgba(15, 23, 42, 0.94); }
