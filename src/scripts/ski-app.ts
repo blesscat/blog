@@ -1,9 +1,10 @@
 // ski-app.ts — map + charts + filter for ski page
 import { buildScatterData, aggregateResortRuns, matchSkiRow } from './lib/ski'
+import { addHoverPopup, createMap, fitMarkers } from './lib/map'
+import type { Marker } from 'maplibre-gl'
 
 declare global {
   interface Window {
-    L: any;
     Chart: any;
     __SKI_DATA__: any[];
     __SKI_MONTHS__: string[];
@@ -24,64 +25,52 @@ function getCtx(name: string) {
 
 // ── 地圖 ───────────────────────────────────────────────────────
 
-function initMap() {
-  const script = document.createElement('script')
-  script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-  script.onload = function () {
-    const L = window.L
-    const data = window.__SKI_DATA__ || []
-    const isMobile = window.matchMedia('(max-width: 768px)').matches ||
-      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-
-    const map = L.map('ski-map', {
-      zoomControl: true, dragging: !isMobile, tap: false, scrollWheelZoom: false,
-    })
-
-    if (isMobile) {
-      const mapEl = $<HTMLElement>('#ski-map')
-      if (mapEl) {
-        mapEl.addEventListener('touchstart', (e: TouchEvent) => {
-          if (e.touches.length >= 2) map.dragging.enable()
-        }, { passive: true })
-        mapEl.addEventListener('touchend', (e: TouchEvent) => {
-          if (e.touches.length < 2) map.dragging.disable()
-        }, { passive: true })
-      }
-    }
-
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 18,
-    }).addTo(map)
-
-    const icon = L.divIcon({
-      html: `<div style="width:12px;height:12px;border-radius:50%;background:#84e7a5;border:2px solid #fff;box-shadow:0 0 8px #84e7a5;"></div>`,
-      className: '', iconSize: [12, 12], iconAnchor: [6, 6],
-    })
-
-    const markers: ReturnType<typeof L.marker>[] = []
-    data.forEach((d: any) => {
-      if (d.lat == null || d.lon == null) return
-      const marker = L.marker([d.lat, d.lon], { icon }).addTo(map).bindTooltip(
-        `<div style="font-family:sans-serif;color:#0f172a;min-width:140px;max-width:200px;word-break:break-word;white-space:normal;">
+async function initMap() {
+  const mapEl = $<HTMLElement>('#ski-map')
+  if (!mapEl) return
+  const { map, maplibre } = await createMap(mapEl, true)
+  const data = window.__SKI_DATA__ || []
+  const markers: Marker[] = []
+  data.forEach((d: any) => {
+    if (d.lat == null || d.lon == null) return
+    const element = document.createElement('div')
+    element.style.cssText = 'width:12px;height:12px;border-radius:50%;background:#84e7a5;border:2px solid #fff;box-shadow:0 0 8px #84e7a5;'
+    const coordinates: [number, number] = [d.lon, d.lat]
+    const marker = new maplibre.Marker({ element }).setLngLat(coordinates).addTo(map)
+    addHoverPopup(map, maplibre, element, coordinates,
+        `<div style="font-family:sans-serif;color:#e2e8f0;min-width:140px;max-width:200px;word-break:break-word;white-space:normal;">
           <div style="font-weight:700;font-size:1rem;margin-bottom:4px;line-height:1.3;">${d.resort}</div>
-          <div style="color:#64748b;font-size:0.82rem;">${d.date}</div>
+          <div style="color:#94a3b8;font-size:0.82rem;">${d.date}</div>
           <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
             <span style="background:#ede9fe;color:#7c3aed;padding:2px 8px;border-radius:99px;font-size:0.78rem;">🎿 ${d.runs} runs</span>
             <span style="background:#fef3c7;color:#d97706;padding:2px 8px;border-radius:99px;font-size:0.78rem;">💨 ${d.top_speed_kmh.toFixed(1)}km/h</span>
             <span style="background:#f0fdf4;color:#16a34a;padding:2px 8px;border-radius:99px;font-size:0.78rem;">🏔 ${d.peak_altitude_m.toFixed(0)}m</span>
           </div>
-        </div>`,
-        { sticky: true }
-      )
-      markers.push(marker)
-    })
+        </div>`, 'ski-map-tooltip', `滑雪 ${d.resort}，${d.date}`)
+    markers.push(marker)
+  })
+  fitMarkers(map, markers, 0.2)
 
-    if (markers.length) {
-      const group = L.featureGroup(markers)
-      map.fitBounds(group.getBounds().pad(0.3))
-    }
+  const shell = document.getElementById('ski-map-shell')
+  const button = document.querySelector<HTMLButtonElement>('.map-fullscreen-toggle[data-map-id="ski-map"]')
+  if (shell && button) {
+    document.addEventListener('fullscreenchange', () => {
+      const active = document.fullscreenElement === shell
+      button.setAttribute('aria-expanded', String(active))
+      button.setAttribute('aria-label', active ? '離開全螢幕地圖' : '全螢幕查看地圖')
+      const label = button.querySelector('span:last-child')
+      if (label) label.textContent = active ? '縮回' : '全螢幕'
+      window.setTimeout(() => map.resize(), 50)
+    })
+    button.addEventListener('click', async () => {
+      if (document.fullscreenElement === shell) {
+        await document.exitFullscreen()
+        return
+      }
+      if (document.fullscreenElement) await document.exitFullscreen()
+      await shell.requestFullscreen()
+    })
   }
-  document.head.appendChild(script)
 }
 
 // ── Charts ─────────────────────────────────────────────────────
@@ -218,7 +207,7 @@ function initFilter() {
   applyFilter()
 }
 
-initMap()
+void initMap()
 initCharts()
 initFilter()
 

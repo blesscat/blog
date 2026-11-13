@@ -1,40 +1,18 @@
 import type { Dive, DiveProfiles } from '../types/dive'
 import { sampleProfile, getDiveMapPoints } from './lib/dives'
+import { addHoverPopup, createMap, fitMarkers, loadMapLibre } from './lib/map'
+import type { Map as MapLibreMap, Marker } from 'maplibre-gl'
 
 declare global {
   interface Window {
     __DIVES_GPS__: Dive[];
     __DIVES_PROFILE__: Dive[];
     __DIVES_ALL__: Dive[];
-    L: any;
     Chart: any;
   }
 }
 
-let leafletPromise: Promise<any> | null = null
 let chartPromise: Promise<any> | null = null
-
-function ensureLeafletLoaded(): Promise<any> {
-  if (window.L) return Promise.resolve(window.L)
-  if (leafletPromise) return leafletPromise
-
-  leafletPromise = new Promise((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>('script[src*="leaflet@1.9.4/dist/leaflet.js"]')
-    if (existing) {
-      existing.addEventListener('load', () => resolve(window.L), { once: true })
-      existing.addEventListener('error', reject, { once: true })
-      return
-    }
-
-    const script = document.createElement('script')
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-    script.onload = () => resolve(window.L)
-    script.onerror = reject
-    document.head.appendChild(script)
-  })
-
-  return leafletPromise
-}
 
 function ensureChartLoaded(): Promise<any> {
   if (window.Chart) return Promise.resolve(window.Chart)
@@ -59,25 +37,9 @@ function ensureChartLoaded(): Promise<any> {
 }
 
 // =====================
-// Leaflet 地圖總覽
+// 地圖總覽
 // =====================
-function applyReadableDarkTiles(map: any, L: any) {
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; OpenStreetMap &copy; CARTO',
-    maxZoom: 19,
-  }).addTo(map)
-
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
-    pane: 'overlayPane',
-    opacity: 0.9,
-    maxZoom: 19,
-  }).addTo(map)
-}
-
 async function initMap() {
-  const L = await ensureLeafletLoaded()
-  const isMobile = window.matchMedia('(max-width: 768px)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-
   const mapEl = document.getElementById('dive-map')
   const mapShell = document.getElementById('dive-map-shell') as HTMLElement | null
   const fullscreenBtn = document.querySelector<HTMLButtonElement>('.map-fullscreen-toggle[data-map-id="dive-map"]')
@@ -90,48 +52,23 @@ async function initMap() {
   }
 
   const refreshMainMap = (delay = 0) => {
-    window.setTimeout(() => map.invalidateSize(), delay)
+    window.setTimeout(() => map.resize(), delay)
   }
 
-  const map = L.map('dive-map', {
-    zoomControl: true,
-    dragging: !isMobile,
-    tap: false,
-    scrollWheelZoom: false,
-  })
-
-  if (isMobile && mapEl) {
-    mapEl.addEventListener('touchstart', function (e: TouchEvent) {
-      if (e.touches.length >= 2) map.dragging.enable()
-    }, { passive: true })
-    mapEl.addEventListener('touchend', function (e: TouchEvent) {
-      if (e.touches.length < 2) map.dragging.disable()
-    }, { passive: true })
-  }
-
-  applyReadableDarkTiles(map, L)
+  if (!mapEl) return
+  const { map, maplibre } = await createMap(mapEl, true)
 
   const dives: Dive[] = window.__DIVES_GPS__ || []
   if (!dives.length) return
 
-  const icon = L.divIcon({
-    html: `<div style="
-      width:16px; height:16px; border-radius:50%;
-      background:radial-gradient(circle at 35% 35%, #c8f7ff 0%, #67e8f9 42%, #06b6d4 100%);
-      border:2px solid rgba(255,255,255,0.96);
-      box-shadow: 0 0 0 3px rgba(6,182,212,0.22), 0 0 18px rgba(103,232,249,0.52);
-    "></div>`,
-    className: '',
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-  })
-
-  const markers: ReturnType<typeof L.marker>[] = []
+  const markers: Marker[] = []
   dives.forEach((d) => {
     if (d.lat == null || d.lon == null) return
-    const marker = L.marker([d.lat, d.lon], { icon })
-      .addTo(map)
-      .bindTooltip(
+    const element = document.createElement('div')
+    element.style.cssText = `width:16px;height:16px;border-radius:50%;background:radial-gradient(circle at 35% 35%, #c8f7ff 0%, #67e8f9 42%, #06b6d4 100%);border:2px solid rgba(255,255,255,0.96);box-shadow:0 0 0 3px rgba(6,182,212,0.22),0 0 18px rgba(103,232,249,0.52);`
+    const coordinates: [number, number] = [d.lon, d.lat]
+    const marker = new maplibre.Marker({ element }).setLngLat(coordinates).addTo(map)
+    addHoverPopup(map, maplibre, element, coordinates,
         `<div style="font-family:sans-serif; color:#e2e8f0; min-width:160px; max-width:220px; word-break:break-word; white-space:normal; line-height:1.4;">
           <div style="font-weight:700; font-size:1rem; margin-bottom:4px; color:#f8fafc; line-height:1.3;">#${d.num} ${d.location || 'Unknown'}</div>
           <div style="color:#94a3b8; font-size:0.82rem;">${d.date}</div>
@@ -141,14 +78,13 @@ async function initMap() {
             ${d.water_temp != null ? `<span style="background:rgba(250,204,21,0.12);color:#fde68a;padding:2px 8px;border-radius:99px;font-size:0.78rem;border:1px solid rgba(250,204,21,0.22);">🌡 ${d.water_temp}°C</span>` : ''}
           </div>
         </div>`,
-        { sticky: true, direction: 'top', offset: [0, -10], className: 'dive-map-tooltip' }
+        'dive-map-tooltip', `潛水 #${d.num} ${d.location || 'Unknown'}，${d.date}`
       )
     markers.push(marker)
   })
 
   if (!markers.length) return
-  const group = L.featureGroup(markers)
-  map.fitBounds(group.getBounds().pad(0.3))
+  fitMarkers(map, markers, 0.2)
 
   if (fullscreenBtn && mapShell) {
     document.addEventListener('fullscreenchange', () => {
@@ -181,12 +117,13 @@ async function initMap() {
 async function initDiveMiniMaps() {
   const dives: Dive[] = window.__DIVES_ALL__ || []
   const diveByNum = new Map(dives.map((d) => [d.num, d]))
-  const mapInstances = new Map<number, any>()
+  const mapInstances = new Map<number, MapLibreMap>()
+  const mapGenerations = new Map<number, number>()
 
   function refreshMapSize(diveNum: number, delay = 0) {
     const map = mapInstances.get(diveNum)
     if (!map) return
-    window.setTimeout(() => map.invalidateSize(), delay)
+    window.setTimeout(() => { if (mapInstances.get(diveNum) === map) map.resize() }, delay)
   }
 
   function setFullscreenButtonState(btn: HTMLButtonElement, isFullscreen: boolean) {
@@ -203,69 +140,52 @@ async function initDiveMiniMaps() {
     return '沒有可顯示的 GPS 座標'
   }
 
-  function makePointIcon(kind: 'entry' | 'exit', label: string) {
-    const bg = kind === 'entry' ? '#22c55e' : '#f87171'
-    return window.L.divIcon({
-      className: '',
-      iconSize: [34, 20],
-      iconAnchor: [17, 10],
-      html: `<div style="display:flex;align-items:center;justify-content:center;min-width:34px;height:20px;padding:0 7px;border-radius:999px;background:${bg};color:#0f172a;border:1px solid rgba(255,255,255,0.8);font:700 10px/1 sans-serif;box-shadow:0 4px 12px rgba(0,0,0,0.28);">${label}</div>`,
-    })
-  }
-
-  async function buildMiniMap(diveNum: number) {
-    if (mapInstances.has(diveNum)) {
-      refreshMapSize(diveNum)
-      return
-    }
-
+  async function buildMiniMap(diveNum: number, generation: number) {
     const dive = diveByNum.get(diveNum)
     if (!dive) return
-
     const points = getDiveMapPoints(dive)
     const mapEl = document.getElementById(`mini-map-${diveNum}`)
     const captionEl = document.getElementById(`map-caption-${diveNum}`)
     if (!mapEl || !captionEl) return
-
     captionEl.textContent = mapCaption(points)
     if (!points.length) return
 
-    const L = await ensureLeafletLoaded()
-    const map = L.map(mapEl, {
-      zoomControl: true,
-      dragging: true,
-      tap: false,
-      scrollWheelZoom: false,
-    })
-
-    applyReadableDarkTiles(map, L)
-
-    const latlngs = points.map((point) => [point.lat, point.lon])
-    points.forEach((point) => {
-      const label = point.kind === 'entry' ? 'IN' : 'OUT'
-      L.marker([point.lat, point.lon], { icon: makePointIcon(point.kind, label) })
-        .addTo(map)
-        .bindTooltip(label, { direction: 'top', offset: [0, -10] })
-    })
-
-    if (latlngs.length === 2) {
-      L.polyline(latlngs, {
-        color: '#94a3b8',
-        weight: 2,
-        opacity: 0.8,
-        dashArray: '4 6',
-      }).addTo(map)
-      map.fitBounds(L.latLngBounds(latlngs).pad(0.65))
-    } else {
-      map.setView(latlngs[0], 15)
+    await loadMapLibre()
+    if (mapGenerations.get(diveNum) !== generation) return
+    const { map, maplibre } = await createMap(mapEl)
+    if (mapGenerations.get(diveNum) !== generation) {
+      map.remove()
+      return
     }
-
-    refreshMapSize(diveNum)
     mapInstances.set(diveNum, map)
+
+    const coordinates: [number, number][] = points.map(point => [point.lon, point.lat])
+    const markers = points.map((point, index) => {
+      const label = point.kind === 'entry' ? 'IN' : 'OUT'
+      const bg = point.kind === 'entry' ? '#22c55e' : '#f87171'
+      const element = document.createElement('div')
+      element.style.cssText = `display:flex;align-items:center;justify-content:center;min-width:34px;height:20px;padding:0 7px;border-radius:999px;background:${bg};color:#0f172a;border:1px solid rgba(255,255,255,0.8);font:700 10px/1 sans-serif;box-shadow:0 4px 12px rgba(0,0,0,0.28);`
+      element.textContent = label
+      const marker = new maplibre.Marker({ element }).setLngLat(coordinates[index]).addTo(map)
+      addHoverPopup(map, maplibre, element, coordinates[index], label, 'dive-map-tooltip', `潛水 #${diveNum} ${label}`)
+      return marker
+    })
+
+    if (coordinates.length === 2) {
+      map.on('load', () => {
+        map.addSource('dive-route', { type: 'geojson', data: { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } } })
+        const firstSymbol = map.getStyle().layers.find(layer => layer.type === 'symbol')?.id
+        map.addLayer({ id: 'dive-route', type: 'line', source: 'dive-route', paint: { 'line-color': '#94a3b8', 'line-width': 2, 'line-opacity': 0.8, 'line-dasharray': [2, 3] } }, firstSymbol)
+      })
+      fitMarkers(map, markers, 0.28)
+    } else {
+      map.jumpTo({ center: coordinates[0], zoom: 15 })
+    }
+    refreshMapSize(diveNum)
   }
 
   document.addEventListener('fullscreenchange', () => {
-    document.querySelectorAll<HTMLButtonElement>('.map-fullscreen-toggle').forEach((btn) => {
+    document.querySelectorAll<HTMLButtonElement>('.map-fullscreen-toggle[data-dive]').forEach((btn) => {
       const diveNum = parseInt(btn.dataset.dive ?? '0', 10)
       const shell = document.getElementById(`mini-map-shell-${diveNum}`)
       const active = document.fullscreenElement === shell
@@ -276,7 +196,7 @@ async function initDiveMiniMaps() {
     })
   })
 
-  document.querySelectorAll<HTMLButtonElement>('.map-fullscreen-toggle').forEach((btn) => {
+  document.querySelectorAll<HTMLButtonElement>('.map-fullscreen-toggle[data-dive]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const diveNum = parseInt(btn.dataset.dive ?? '0', 10)
       const shell = document.getElementById(`mini-map-shell-${diveNum}`) as HTMLElement | null
@@ -303,13 +223,17 @@ async function initDiveMiniMaps() {
       if (!panel) return
 
       const expanded = btn.getAttribute('aria-expanded') === 'true'
+      const generation = (mapGenerations.get(diveNum) ?? 0) + 1
+      mapGenerations.set(diveNum, generation)
       if (expanded) {
+        mapInstances.get(diveNum)?.remove()
+        mapInstances.delete(diveNum)
         panel.hidden = true
         btn.setAttribute('aria-expanded', 'false')
       } else {
         panel.hidden = false
         btn.setAttribute('aria-expanded', 'true')
-        await buildMiniMap(diveNum)
+        await buildMiniMap(diveNum, generation)
       }
     })
   })

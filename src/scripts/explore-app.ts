@@ -4,7 +4,6 @@
 
 declare global {
   interface Window {
-    L: any;
     Chart: any;
     __EXPLORE_DIVES__: any[];
     __EXPLORE_SKI__: any[];
@@ -15,36 +14,25 @@ declare global {
 // ── helpers ──────────────────────────────────────────────────
 
 import { getYear, groupDivesByLocation, groupSkiByResort, countCountries } from './lib/explore'
+import { createMap, fitMarkers } from './lib/map'
+import type { Map as MapLibreMap, Marker } from 'maplibre-gl'
 
 // ── state ────────────────────────────────────────────────────
 
-let map: any = null
+let map: MapLibreMap
+let maplibre: typeof import('maplibre-gl')
 let showDives = true
 let showSki = true
 let yearMin = 2024
 let yearMax = new Date().getFullYear()
 let selectedYearMin = yearMin
 let selectedYearMax = yearMax
-let allMarkers: { el: any; type: 'dive' | 'ski'; year: number }[] = []
+let allMarkers: { el: Marker; type: 'dive' | 'ski'; year: number; visible: boolean }[] = []
 let profilesCache: Record<string, any[]> = {}
-
-// ── load scripts ─────────────────────────────────────────────
-
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve) => {
-    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return }
-    const s = document.createElement('script')
-    s.src = src
-    s.onload = () => resolve()
-    document.head.appendChild(s)
-  })
-}
 
 // ── main ─────────────────────────────────────────────────────
 
 async function init() {
-  await loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js')
-
   const dives: any[] = window.__EXPLORE_DIVES__ || []
   const ski: any[] = window.__EXPLORE_SKI__ || []
 
@@ -62,7 +50,7 @@ async function init() {
     profilesCache = await r.json()
   } catch (_) {}
 
-  initMap(dives, ski)
+  await initMap(dives, ski)
   initControls(dives, ski)
   updateStats(dives, ski)
 
@@ -83,75 +71,47 @@ async function init() {
 
 // ── map ──────────────────────────────────────────────────────
 
-function initMap(dives: any[], ski: any[]) {
-  const L = window.L
-  const isMobile = window.matchMedia('(max-width: 768px)').matches ||
-    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-
-  map = L.map('explore-map', {
-    zoomControl: true,
-    attributionControl: false,
-    dragging: !isMobile,
-    tap: false,
-    scrollWheelZoom: false,
-  })
-
-  if (isMobile) {
-    const mapEl = document.getElementById('explore-map')
-    if (mapEl) {
-      mapEl.addEventListener('touchstart', (e: TouchEvent) => {
-        if (e.touches.length >= 2) map.dragging.enable()
-      }, { passive: true })
-      mapEl.addEventListener('touchend', (e: TouchEvent) => {
-        if (e.touches.length < 2) map.dragging.disable()
-      }, { passive: true })
-    }
-  }
-
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 18,
-  }).addTo(map)
-
-  L.control.attribution({ prefix: '© OpenStreetMap © CARTO', position: 'bottomright' }).addTo(map)
-
+async function initMap(dives: any[], ski: any[]) {
+  const container = document.getElementById('explore-map')
+  if (!container) throw new Error('Explore map container is missing')
+  const created = await createMap(container, true)
+  map = created.map
+  maplibre = created.maplibre
   buildMarkers(dives, ski)
   fitAll()
 }
 
-function makeIcon(color: string, count: number) {
-  const L = window.L
+function makeIcon(color: string, count: number, label: string) {
   const size = count > 1 ? 18 : 12
   const badge = count > 1
     ? `<span style="position:absolute;top:-6px;right:-6px;background:#0a0e1a;color:${color};font-size:9px;font-weight:800;border:1px solid ${color};border-radius:99px;padding:0 4px;line-height:16px;min-width:16px;text-align:center;">${count}</span>`
     : ''
-  return L.divIcon({
-    html: `<div style="position:relative;width:${size}px;height:${size}px;">
-      <div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 10px ${color}88;"></div>
-      ${badge}
-    </div>`,
-    className: '',
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-  })
+  const element = document.createElement('button')
+  element.type = 'button'
+  element.setAttribute('aria-label', label)
+  element.style.cssText = `width:${size}px;height:${size}px;padding:0;border:0;background:transparent;cursor:pointer;`
+  element.innerHTML = `<div style="position:relative;width:${size}px;height:${size}px;"><div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 10px ${color}88;"></div>${badge}</div>`
+  return element
 }
 
 function buildMarkers(dives: any[], ski: any[]) {
-  const L = window.L
-  allMarkers.forEach(m => map.removeLayer(m.el))
+  allMarkers.forEach(m => m.el.remove())
   allMarkers = []
 
   const diveGroups = groupDivesByLocation(dives)
 
   Object.values(diveGroups).forEach(group => {
     const d0 = group[0]
-    const marker = L.marker([d0.lat, d0.lon], { icon: makeIcon('#3bd3fd', group.length) })
-    marker.on('click', () => {
+    if (d0.lat == null || d0.lon == null) return
+    const element = makeIcon('#3bd3fd', group.length, `潛水 ${d0.location || 'Unknown'}，${group.length} 筆紀錄`)
+    const marker = new maplibre.Marker({ element }).setLngLat([d0.lon, d0.lat])
+    element.addEventListener('click', () => {
       window.dispatchEvent(new CustomEvent('explore:open-dive', {
         detail: { group, profiles: profilesCache },
       }))
     })
     marker.addTo(map)
-    allMarkers.push({ el: marker, type: 'dive', year: getYear(d0.date) })
+    allMarkers.push({ el: marker, type: 'dive', year: getYear(d0.date), visible: true })
   })
 
   const skiGroups = groupSkiByResort(ski)
@@ -160,33 +120,30 @@ function buildMarkers(dives: any[], ski: any[]) {
     const d0 = group[0]
     const lat = group.reduce((s: number, d: any) => s + d.lat, 0) / group.length
     const lon = group.reduce((s: number, d: any) => s + d.lon, 0) / group.length
-    const marker = L.marker([lat, lon], { icon: makeIcon('#84e7a5', group.length) })
-    marker.on('click', () => {
+    const element = makeIcon('#84e7a5', group.length, `滑雪 ${d0.resort}，${group.length} 筆紀錄`)
+    const marker = new maplibre.Marker({ element }).setLngLat([lon, lat])
+    element.addEventListener('click', () => {
       window.dispatchEvent(new CustomEvent('explore:open-ski', {
         detail: { group },
       }))
     })
     marker.addTo(map)
-    allMarkers.push({ el: marker, type: 'ski', year: getYear(d0.date) })
+    allMarkers.push({ el: marker, type: 'ski', year: getYear(d0.date), visible: true })
   })
 }
 
 function fitAll() {
-  const visible = allMarkers.filter(m => map.hasLayer(m.el))
-  if (!visible.length) return
-  const group = window.L.featureGroup(visible.map(m => m.el))
-  map.fitBounds(group.getBounds().pad(0.25))
+  fitMarkers(map, allMarkers.filter(marker => marker.visible).map(marker => marker.el), 0.17)
 }
 
 function applyFilters() {
-  allMarkers.forEach(({ el, type, year }) => {
-    const typeOk = type === 'dive' ? showDives : showSki
-    const yearOk = year >= selectedYearMin && year <= selectedYearMax
-    if (typeOk && yearOk) {
-      if (!map.hasLayer(el)) map.addLayer(el)
-    } else {
-      if (map.hasLayer(el)) map.removeLayer(el)
-    }
+  allMarkers.forEach(marker => {
+    const typeOk = marker.type === 'dive' ? showDives : showSki
+    const yearOk = marker.year >= selectedYearMin && marker.year <= selectedYearMax
+    const visible = typeOk && yearOk
+    if (visible && !marker.visible) marker.el.addTo(map)
+    if (!visible && marker.visible) marker.el.remove()
+    marker.visible = visible
   })
   updateStats(window.__EXPLORE_DIVES__ || [], window.__EXPLORE_SKI__ || [])
 }
